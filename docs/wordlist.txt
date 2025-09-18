@@ -1,9 +1,7 @@
-SQLGuardian
-sqlguardian
-sqlguardian
 addopts
 autosummary
 celerybeat
+clickhouse
 Connor
 crustypy
 Cython
@@ -48,6 +46,8 @@ SPHINXOPTS
 Spyder
 spyderproject
 spyproject
+sqlguardian
+SQLGuardian
 toctree
 unittests
 venv

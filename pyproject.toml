@@ -21,6 +21,9 @@ classifiers = [
 requires-python = ">=3.13"  # py_ver
 dependencies = [
     "loguru>=0.7.3",
+    "pydantic>=2.11.9",
+    "pyyaml>=6.0.2",
+    "sqlglot[rs]>=27.15.3",
 ]
 
 [build-system]
@@ -59,6 +62,7 @@ typing = [
     {include-group = "automation"},
     "mypy>=1.15.0",
     # Typing stubs go here
+    "types-pyyaml>=6.0.12.20250915",
 ]
 linting = [
     "ruff>=0.9.6",
