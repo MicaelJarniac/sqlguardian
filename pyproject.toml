@@ -1,6 +1,6 @@
 [project]
 name = "sqlguardian"
-version = "0.0.0"
+version = "0.1.0"
 description = "SQLGuardian."
 authors = [
   {name = "Micael Jarniac", email = "micael@jarniac.dev"},
