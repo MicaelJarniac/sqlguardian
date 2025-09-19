@@ -19,18 +19,24 @@ def make_policy() -> Policy:
             "databases": {
                 "default": {
                     "guard_column": "companyId",
+                    "description": "Default database",
                     "tables": {
                         "users": {"description": "User table"},
                         "orders": {
                             "guard_column": "orgId",
                             "description": "Order table",
                         },
+                        # No description, should fall back to database description
+                        "products": {},
                     },
                 },
                 "analytics": {
                     "guard_column": "tenantId",
+                    "description": "Analytics database",
                     "tables": {
                         "events": {"description": "Event log"},
+                        # No description, should fall back to database description
+                        "metrics": {},
                     },
                 },
             },
@@ -71,14 +77,33 @@ def test_policy_table_description() -> None:
     assert policy.table_description(None, "users") == "User table"
     assert policy.table_description("default", "orders") == "Order table"
     assert policy.table_description("analytics", "events") == "Event log"
+    # Test that table_description only returns table-specific descriptions
+    assert policy.table_description("default", "products") is None
+    assert policy.table_description("analytics", "metrics") is None
     assert policy.table_description("default", "missing") is None
+
+
+def test_policy_database_description() -> None:
+    """Test Policy.database_description returns correct descriptions."""
+    policy = make_policy()
+    assert policy.database_description("default") == "Default database"
+    assert policy.database_description("analytics") == "Analytics database"
+    assert policy.database_description("missing") is None
+    # Falls back to "default"
+    assert policy.database_description(None) == "Default database"
 
 
 def test_enforce_policy_where_guards_adds_predicate() -> None:
     """Test enforcement adds guard predicate to SQL."""
     policy = make_policy()
     sql = "SELECT * FROM users"
-    out = enforce_policy_where_guards(sql, company_value="42", policy=policy)
+    out = enforce_policy_where_guards(
+        sql,
+        guard_value="42",
+        policy=policy,
+        read_dialect="duckdb",
+        write_dialect="duckdb",
+    )
     assert "WHERE users.companyId = '42'" in out
 
 
@@ -86,7 +111,13 @@ def test_enforce_policy_where_guards_existing_predicate() -> None:
     """Test enforcement does not duplicate existing predicate."""
     policy = make_policy()
     sql = "SELECT * FROM users WHERE users.companyId = '42'"
-    out = enforce_policy_where_guards(sql, company_value="42", policy=policy)
+    out = enforce_policy_where_guards(
+        sql,
+        guard_value="42",
+        policy=policy,
+        read_dialect="duckdb",
+        write_dialect="duckdb",
+    )
     # Should not duplicate predicate
     assert out.count("users.companyId = '42'") == 1
 
@@ -96,7 +127,13 @@ def test_enforce_policy_where_guards_non_allowlisted() -> None:
     policy = make_policy()
     sql = "SELECT * FROM missing"
     with pytest.raises(AllowlistError):
-        enforce_policy_where_guards(sql, company_value="42", policy=policy)
+        enforce_policy_where_guards(
+            sql,
+            guard_value="42",
+            policy=policy,
+            read_dialect="duckdb",
+            write_dialect="duckdb",
+        )
 
 
 def test_describe_allowed_tables() -> None:
@@ -106,6 +143,11 @@ def test_describe_allowed_tables() -> None:
     assert any(r["table"] == "users" for r in rows)
     assert any(r["table"] == "orders" for r in rows)
     assert any(r["table"] == "events" for r in rows)
+    # Check that tables without descriptions have empty descriptions
+    products_row = next(r for r in rows if r["table"] == "products")
+    assert products_row["description"] == ""
+    metrics_row = next(r for r in rows if r["table"] == "metrics")
+    assert metrics_row["description"] == ""
 
 
 def test_render_markdown_description() -> None:
