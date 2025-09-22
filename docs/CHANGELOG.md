@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.3.0 (2025-09-22)
+
+### Features
+
+- Disable guard per table
+  ([`26a8d63`](https://github.com/MicaelJarniac/sqlguardian/commit/26a8d63df731b0a058e384f10deaa624e0d31e2a))
+
+
 ## v0.2.1 (2025-09-22)
 
 ### Bug Fixes
