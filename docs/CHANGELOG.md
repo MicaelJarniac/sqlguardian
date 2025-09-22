@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.2.1 (2025-09-22)
+
+### Bug Fixes
+
+- Ctes
+  ([`c67881e`](https://github.com/MicaelJarniac/sqlguardian/commit/c67881e4502192ad28c715e6334d2f195c8eef6c))
+
+
 ## v0.2.0 (2025-09-19)
 
 ### Features
