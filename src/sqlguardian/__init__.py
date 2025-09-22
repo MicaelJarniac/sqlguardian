@@ -5,6 +5,7 @@ from __future__ import annotations
 __all__: tuple[str, ...] = (
     "DEFAULT",
     "SQL",
+    "UNSPECIFIED",
     "AllowedDatabaseInfo",
     "AllowedTableInfo",
     "AllowlistError",
@@ -17,6 +18,7 @@ __all__: tuple[str, ...] = (
     "TableAlias",
     "TableName",
     "TableRule",
+    "UnspecifiedType",
     "describe_allowed_databases",
     "describe_allowed_tables",
     "enforce_policy_where_guards",
@@ -26,12 +28,29 @@ __all__: tuple[str, ...] = (
 from typing import TYPE_CHECKING, Self, TypedDict
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlglot import exp, parse_one
 
 if TYPE_CHECKING:  # pragma: no cover
     from pathlib import Path
     from typing import Final
+
+
+# ============================================================================
+# Sentinel for distinguishing between "not specified" and "explicitly null"
+# ============================================================================
+
+
+class UnspecifiedType:
+    """Sentinel type to distinguish between 'not specified' and 'explicitly null'."""
+
+    def __repr__(self) -> str:
+        """Represent as string."""
+        return "UNSPECIFIED"
+
+
+UNSPECIFIED = UnspecifiedType()
+
 
 # ============================================================================
 # Domain type aliases (Python 3.13 style)
@@ -84,16 +103,33 @@ class AllowlistError(PermissionError):
 class TableRule(BaseModel):
     """Rules for one table."""
 
-    guard_column: ColumnName | None = None
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    guard_column: ColumnName | None | UnspecifiedType = UNSPECIFIED
     description: Description | None = None
 
 
 class DbRule(BaseModel):
     """Rules for one database."""
 
-    guard_column: ColumnName | None = None
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    guard_column: ColumnName | None | UnspecifiedType = UNSPECIFIED
     description: Description | None = None
     tables: dict[TableName, TableRule] = Field(default_factory=dict)
+
+
+def _resolve_guard_column(
+    table_guard: ColumnName | None | UnspecifiedType,
+    db_guard: ColumnName | None | UnspecifiedType,
+    default_guard: ColumnName | None,
+) -> ColumnName | None:  # sourcery skip: assign-if-exp, reintroduce-else
+    """Resolve guard column with proper fallback logic."""
+    if not isinstance(table_guard, UnspecifiedType):
+        return table_guard
+    if not isinstance(db_guard, UnspecifiedType):
+        return db_guard
+    return default_guard
 
 
 class Policy(BaseModel):
@@ -127,6 +163,11 @@ class Policy(BaseModel):
         """Get the guard column for this (db, table).
 
         Raises AllowlistError if not allowlisted.
+
+        Returns:
+        - The specific guard column if set for table or database
+        - The default guard column if none specified at table/database level
+        - None if explicitly set to null at any level (disables guard)
         """
         db_key = db or DEFAULT
         db_rule = self.databases.get(db_key)
@@ -137,8 +178,9 @@ class Policy(BaseModel):
         if not tbl_rule:
             msg = f"Table '{db_key}.{table}' not allowlisted"
             raise AllowlistError(msg)
-        return (
-            tbl_rule.guard_column or db_rule.guard_column or self.default_guard_column
+
+        return _resolve_guard_column(
+            tbl_rule.guard_column, db_rule.guard_column, self.default_guard_column
         )
 
     def database_description(
@@ -227,6 +269,7 @@ def _collect_cte_names(root: exp.Expression) -> set[str]:
 
 
 def _is_actual_table_reference(t: exp.Table, cte_names: set[str]) -> bool:
+    # sourcery skip: assign-if-exp, boolean-if-exp-identity, reintroduce-else
     """Check if this Table reference is to an actual database table (not a CTE)."""
     table_name = _table_name(t)
 
@@ -322,7 +365,9 @@ def describe_allowed_databases(policy: Policy) -> list[AllowedDatabaseInfo]:
     return [
         AllowedDatabaseInfo(
             database=db_name,
-            guard_column=(db_rule.guard_column or policy.default_guard_column),
+            guard_column=_resolve_guard_column(
+                UNSPECIFIED, db_rule.guard_column, policy.default_guard_column
+            ),
             description=db_rule.description or "",
         )
         for db_name, db_rule in sorted(policy.databases.items())
@@ -340,11 +385,7 @@ def describe_allowed_tables(policy: Policy) -> list[AllowedTableInfo]:
             AllowedTableInfo(
                 database=db_name,
                 table=tbl_name,
-                guard_column=(
-                    tbl_rule.guard_column
-                    or db_rule.guard_column
-                    or policy.default_guard_column
-                ),
+                guard_column=policy.guard_column_for(db_name, tbl_name),
                 description=tbl_rule.description or "",
             )
             for tbl_name, tbl_rule in sorted(db_rule.tables.items())
