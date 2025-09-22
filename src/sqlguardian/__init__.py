@@ -212,6 +212,38 @@ def _and_where(select: exp.Select, extra_predicates: list[exp.Expression]) -> No
     )
 
 
+def _collect_cte_names(root: exp.Expression) -> set[str]:
+    """Collect all CTE names defined in the query."""
+    cte_names = set()
+
+    # Find all WITH clauses
+    for with_clause in root.find_all(exp.With):
+        # Each WITH clause contains CTEs
+        for cte in with_clause.expressions:
+            if isinstance(cte, exp.CTE) and (alias := cte.alias):
+                cte_names.add(alias)
+
+    return cte_names
+
+
+def _is_actual_table_reference(t: exp.Table, cte_names: set[str]) -> bool:
+    """Check if this Table reference is to an actual database table (not a CTE)."""
+    table_name = _table_name(t)
+
+    # If it has a database prefix, it's definitely an actual table
+    # (even if there's a CTE with the same base name)
+    if _db_name(t) is not None:
+        return True
+
+    # If no database prefix but table name matches a CTE, it's a CTE reference
+    if table_name in cte_names:  # noqa: SIM103
+        return False
+
+    # If no database prefix and not a CTE, assume it's an actual table
+    # (this handles cases where tables are referenced without db prefix)
+    return True
+
+
 # ============================================================================
 # Core enforcement
 # ============================================================================
@@ -231,22 +263,33 @@ def enforce_policy_where_guards(
     - Adds WHERE `<alias>.<guard_col> = <company_value>` for each referenced table
       in every SELECT (joins, subqueries, CTEs included).
     - Skips adding a predicate if an identical one already exists.
+    - Ignores CTE references (they're not actual database tables).
     """
     root = parse_one(sql, read=read_dialect)
 
-    # Check all tables first
-    for t in root.find_all(exp.Table):
-        db, tbl = _db_name(t), _table_name(t)
-        if not policy.is_allowed(db, tbl):
-            db_key = db or DEFAULT
-            msg = f"Reference to non-allowlisted table: {db_key}.{tbl}"
-            raise AllowlistError(msg)
+    # Collect all CTE names first
+    cte_names = _collect_cte_names(root)
 
-    # Add guards
+    # Check all ACTUAL table references (not CTEs)
+    for t in root.find_all(exp.Table):
+        if _is_actual_table_reference(t, cte_names):
+            db, tbl = _db_name(t), _table_name(t)
+            if not policy.is_allowed(db, tbl):
+                db_key = db or DEFAULT
+                msg = f"Reference to non-allowlisted table: {db_key}.{tbl}"
+                raise AllowlistError(msg)
+
+    # Add guards to all actual tables (including those in CTEs/subqueries)
     for sel in root.find_all(exp.Select):
-        tables = list(sel.find_all(exp.Table))
+        # Find all actual table references within this SELECT
+        tables = [
+            t
+            for t in sel.find_all(exp.Table)
+            if _is_actual_table_reference(t, cte_names)
+        ]
         if not tables:
             continue
+
         predicates: list[exp.Expression] = []
         for t in tables:
             db, tbl = _db_name(t), _table_name(t)
