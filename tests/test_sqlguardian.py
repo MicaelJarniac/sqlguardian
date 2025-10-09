@@ -545,8 +545,10 @@ def test_security_recursive_cte() -> None:
         write_dialect="duckdb",
     )
 
-    # Both references to users table should have guards
-    assert out.count("users.companyId = 'recursive_test'") >= 2  # noqa: PLR2004
+    # Base case should have guard on users table (no alias)
+    assert "users.companyId = 'recursive_test'" in out
+    # Recursive case should have guard on aliased users table
+    assert "u.companyId = 'recursive_test'" in out
     # CTE reference should not have guard
     assert "user_hierarchy.companyId" not in out
 

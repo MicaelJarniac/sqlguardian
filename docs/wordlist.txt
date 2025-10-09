@@ -4,6 +4,7 @@ celerybeat
 clickhouse
 Connor
 crustypy
+ctes
 Cython
 dmypy
 docstrings

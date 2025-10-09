@@ -287,6 +287,36 @@ def _is_actual_table_reference(t: exp.Table, cte_names: set[str]) -> bool:
     return True
 
 
+def _get_tables_excluding_cte_definitions(
+    select: exp.Select, cte_names: set[str]
+) -> list[exp.Table]:
+    """Get tables referenced by this SELECT, excluding those in its CTE definitions.
+
+    When a SELECT has a WITH clause, we don't want to add guards for tables
+    inside the CTEs to the outer SELECT's WHERE clause. Those tables will be
+    guarded when we process their respective CTE's SELECT statement.
+    """
+    # Find all tables in the SELECT
+    all_tables = list(select.find_all(exp.Table))
+
+    # Find tables that are in CTE definitions attached to this SELECT
+    with_clause = select.args.get("with")
+    if not with_clause:
+        return [t for t in all_tables if _is_actual_table_reference(t, cte_names)]
+
+    tables_in_ctes: set[exp.Table] = set()
+    for cte in with_clause.expressions:
+        if isinstance(cte, exp.CTE):
+            tables_in_ctes.update(cte.find_all(exp.Table))
+
+    # Return only tables not in CTE definitions
+    return [
+        t
+        for t in all_tables
+        if _is_actual_table_reference(t, cte_names) and t not in tables_in_ctes
+    ]
+
+
 # ============================================================================
 # Core enforcement
 # ============================================================================
@@ -324,12 +354,8 @@ def enforce_policy_where_guards(
 
     # Add guards to all actual tables (including those in CTEs/subqueries)
     for sel in root.find_all(exp.Select):
-        # Find all actual table references within this SELECT
-        tables = [
-            t
-            for t in sel.find_all(exp.Table)
-            if _is_actual_table_reference(t, cte_names)
-        ]
+        # Get tables directly referenced by this SELECT (not in its CTE definitions)
+        tables = _get_tables_excluding_cte_definitions(sel, cte_names)
         if not tables:
             continue
 
